@@ -19,19 +19,17 @@ Follow the instructions of the each manual.
 Kalpy is a set of python scripts for manupulating Chainer(<http://chainer.org/>) and Kaldi(<http://kaldi.sourceforge.net>).
 
 - chainer_tools
--- nn_parallel.py implements a chainer-based NeuralNetwork that supports following structure
-   --- Model-based parallelization
-   --- Convolutional-net, Batch
+-- nn_parallel.py implements a chainer-based NeuralNetwork.
 
--cuda_tools
---  cuda_utils.py contains utility functions for nvidia-ml-py.
+- cuda_tools
+-- cuda_utils.py contains utility functions for nvidia-ml-py.
 
--kaldi
+- kaldi
 Scripts in this directly implements data stream functions that provides KALDI-format (e.x. ark, scp, nnet, ali, etc.) in python-friendly format (e.x. npz, HDF5).
 -- commands.py implements data stream functions for the Kaldi-format that directly utializes KALDI commands.
 -- io.py implements data stream functions for the Kaldi-format that does NOT depend on KALDI commands.
 -- data.py implements wrapper functions to read/write use Kaldi-format.
 
--timit
+- timit
 These files is a simple example of kaldi-based phonerecognition for TIMIT dataset.
 They are basically based on egs/timit/s5 recipe.
