@@ -8,6 +8,7 @@ Date: 2016
 
 import logging
 import numpy as np
+import numpy.matlib
 import sys
 from kaldi.io import KaldiScp, KaldiArk, KaldiNnet
 from kaldi.commands import KaldiCommand
@@ -40,28 +41,37 @@ def __get_word_to_i__(labels):
             i_type += 1
     return word_to_i_map
 
-def load_labeled_data(ark, pdf, offsets=[0]):
+def load_labeled_data(ark, pdf, offsets=[0], bias=None,scale=None):
     X = []
     labels = []
     ali = {key:vec for key, vec in pdf}
     for key, data in ark:
         labels.append(ali[key])
         for x in splice(data, offsets):
+            if bias is not None:
+                x += bias[0]
+            if scale is not None:
+                x += scale[0]
             X.append(x)
     return np.vstack(X), np.hstack(labels)
 
-def load_data(ark, offsets=[0]):
+def load_data(ark, offsets=[0], bias=None,scale=None):
     X = []
     Nf={}
     s_index =0
     for key, data in ark:
         for x in splice(data, offsets):
-            X.append(x)
+            if bias is not None:
+                x += bias[0]
+            if scale is not None:
+                x += scale[0]
+            X.append (x)
         Nf[key] = (s_index,s_index+data.shape[0]-1)
         s_index +=data.shape[0]
-    return np.vstack(X), Nf
 
-def load_timit_labelled_kaldi(ark, pdf, offsets=[0]):
+    return  np.vstack(X), Nf
+
+def load_timit_labelled_kaldi(ark, pdf=None, offsets=[0], nnet_transf=None, bias=None,scale=None):
     """
     Load the TIMIT frames with their labels from .scp file.
     Each frame is concatinated with its neighbor frames
@@ -74,14 +84,27 @@ def load_timit_labelled_kaldi(ark, pdf, offsets=[0]):
 
     Return: feature matrix, 
     """
-    train_x, train_y = load_labeled_data(ark, pdf, offsets)
+    if nnet_transf is not None:
+        for layer in load_nnet(nnet_transf):
+            if layer['func'] == 'Splice':
+                offsets = layer['context']
+            elif layer['func'] == 'AddShift':
+                bias = layer['b']
+            elif layer['func'] == 'Rescale':
+                scale=layer['b']
+
+    if pdf is not None:
+        train_x, train_y = load_labeled_data(ark, pdf, offsets, bias, scale)
+    else:
+        train_x, train_y = load_data(ark, offsets, bias, scale)
+        
 #    if word_to_i is None:
 #        word_to_i = __get_word_to_i__(train_labels)
 
     # Convert labels to word IDs
 #    train_y = np.asarray([word_to_i[label] for label in train_labels],dtype=np.int32)
 
-    return (train_x, train_y)
+    return train_x, train_y
 
 def load_nnet(filename):
     return [layer for layer in KaldiNnet(filename)]
@@ -115,6 +138,7 @@ class Kaldipairwise:
 #                              UTILITY FUNCTIONS                              #
 #-----------------------------------------------------------------------------#
 
+
 def convert_nnet_to_conf(filename):
     layers_specs =[]
     layers = load_nnet(filename)
@@ -122,7 +146,7 @@ def convert_nnet_to_conf(filename):
     while i <len(layers):
         if layers[i]['func'] == 'AffineTransform':
             d={}
-            d['dimensions'] =[layers[i]['dim'][1],layers[i]['dim'][0]]
+            d['dimensions'] = np.asarray([layers[i]['dim'][1],layers[i]['dim'][0]])
             d['type'] = 'full'
             d['activation'] = layers[i+1]['func']
             d['W'] = layers[i]['W']
@@ -169,15 +193,16 @@ def get_mss_set(train_x, train_y, ratio=1.0, min_counts=1):
 
 if __name__ == "__main__":
 #    logging.basicConfig(level=logging.DEBUG)
-#    ali_to_pdf=KaldiCommand('bin/ali-to-pdf', option='timit/exp/tri3_ali/final.mdl')
-#    pdf = ali_to_pdf << '\"gunzip -c timit/exp/tri3_ali/ali.*.gz |\"'
-#    filename= '/data2/tawara/work/ttic/MyPython/src/kaldi/timit/data/fbank/train_tr90/feats.scp'
-#    ark = KaldiScp(filename)
-#    train, word_to_i = load_timit_labelled_kaldi(ark, pdf, [0])
-#    ark.reset()
-#    train, nf = load_data(ark,[0])
+    ali_to_pdf=KaldiCommand('bin/ali-to-pdf', option='timit/exp/tri3_ali/final.mdl')
+    pdf = ali_to_pdf << '\"gunzip -c timit/exp/tri3_ali/ali.*.gz |\"'
+    filename= '/data2/tawara/work/ttic/MyPython/src/kaldi/timit/data/fbank/train_tr90/feats.scp'
+    nnet_transf='/data2/tawara/work/ttic/MyPython/src/kaldi/timit/final.feature_transform'
+    ark = KaldiScp(filename)
+    train, word_to_i = load_timit_labelled_kaldi(ark, pdf,  nnet_transf= nnet_transf)
+    ark.reset()
+    train, nf = load_data(ark,[0])
 
-    filename ='timit/exp/fbank/dnn4_nn5_1024_cmvn_splice10_pretrain-dnn/final.nnet'
-    layers = load_nnet(filename)
-    print layers
+#    filename ='timit/exp/fbank/dnn4_nn5_1024_cmvn_splice10_pretrain-dnn/final.nnet'
+#    layers = load_nnet(filename)
+#    print layers
 

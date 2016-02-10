@@ -36,18 +36,17 @@ act='sigmoid'
 logger = logging.getLogger(__name__)
 default_options_dict = {
     "context_length": context_length,
-    "data_dir": "data/icassp15.0",
     "njobs": 1,
     "rnd_seed": 42,
-    "batch_size": 474,
+    "batch_size": 256,
     "n_max_epochs": 20,
     "model_dir": "models",
     "online_evaluation": False,
-#    "layers_specs": [
-#        {"type": "full", "dimensions": (23*(context_length*2+1), 1024), "activation": 'linear',
-#         'BN': (True), 
-#         'dropout': 0.5
-#        },
+    "layers_specs": [
+        {"type": "full", "dimensions": (23*(context_length*2+1), 1024), "activation": 'linear',
+         'BN': (True), 
+         'dropout': 0.5
+        },
 #        {"type": "full", "dimensions": (1024, 1024), "activation": 'Sigmoid', 
 #         'BN': (True), 
 #         'dropout': 0.5
@@ -64,11 +63,11 @@ default_options_dict = {
 #         'BN': (True), 
 #         'dropout': 0.5
 #        },
-#        {"type": "full", "dimensions": (1024, 2032), "activation": 'linear', 
-#         'BN': (True), 
-#         'dropout': 0.5
-#        },
-#    ],
+        {"type": "full", "dimensions": (1024, 2032), "activation": 'linear', 
+         'BN': (True), 
+         'dropout': 0.5
+        },
+    ],
     "optimizer":optimizers.SGD(0.008),
 #    "optimizer":optimizers.Adam(),
 
@@ -167,8 +166,6 @@ if __name__ == "__main__":
     train_cmd.add_argument("--epoch", type=int,   default=default_options_dict['n_max_epochs'], help="number of epoch")
     train_cmd.add_argument("--seed", type=int,    default=default_options_dict['rnd_seed'],    help="random seed")
     train_cmd.add_argument("--batchsize", type=int, default=default_options_dict['batch_size'],    help="batchsize")
-    train_cmd.add_argument("--dataset", type=str, default='/home-nfs/tawara/work/ttic/MyPython/src/timit/timit_3.train.npz', 
-                           help="Which dataset to use")
     # Analyze
     analyze_cmd = subparsers.add_parser('analyze', help='Analyze each layer')
     analyze_cmd.add_argument("load_from",   type=str, default='model',  help="Destination to load the state from")
@@ -191,8 +188,9 @@ if __name__ == "__main__":
         model.device_id = [0]
         cuda.get_device(0).use()
         offset = range(-context_length, context_length+1)
-        x_test, frame_index = load_data(\
-            KaldiScp('/data2/tawara/work/ttic/MyPython/src/kaldi/timit/data/fbank/test/feats.scp'), offset)
+        x_test, frame_index = load_timit_labelled_kaldi(\
+            KaldiArk('/data2/tawara/work/ttic/MyPython/src/kaldi/timit/feats_test_cmvn.ark'), \
+                nnet_transf = '/data2/tawara/work/ttic/MyPython/src/kaldi/timit/final.feature_transform')
         x_train,_ = load_data(\
             KaldiScp('/data2/tawara/work/ttic/MyPython/src/kaldi/timit/data/fbank/train_tr90/feats.scp'), \
                 offsets = offset)
@@ -226,26 +224,27 @@ if __name__ == "__main__":
         offset = range(-context_length, context_length+1)
         ali_to_pdf=KaldiCommand('bin/ali-to-pdf', option='/data2/tawara/work/ttic/MyPython/src/kaldi/timit/exp/tri3_ali/final.mdl')
 #        feats=KaldiCommand('featbin/apply-cmvn', '--norm-means=true --norm-vars=true --utt2spk=ark:/data2/tawara/work/ttic/MyPython/src/kaldi/timit/data/fbank/train_tr90/utt2spk scp:/data2/tawara/work/ttic/MyPython/src/kaldi/timit/data/fbank/train_tr90/cmvn.scp')
-        dataset = load_timit_labelled_kaldi(\
+        x_train, y_train = load_timit_labelled_kaldi(\
 #            feats('/data2/tawara/work/ttic/MyPython/src/kaldi/timit/data/fbank/train_tr90/feats.scp'),
-            KaldiArk('/data2/tawara/work/ttic/MyPython/src/kaldi/timit/feats.ark'),
+            KaldiArk('/data2/tawara/work/ttic/MyPython/src/kaldi/timit/feats_cmvn.ark'),
                 ali_to_pdf('\"gunzip -c /data2/tawara/work/ttic/MyPython/src/kaldi/timit/exp/tri3_ali/ali.*.gz |\"'), \
-                offsets = offset)
-        x_train, y_train = dataset
+                nnet_transf = '/data2/tawara/work/ttic/MyPython/src/kaldi/timit/final.feature_transform')
 
         feats=KaldiCommand('featbin/apply-cmvn', '--norm-means=true --norm-vars=true --utt2spk=ark:/data2/tawara/work/ttic/MyPython/src/kaldi/timit/data/fbank/train_cv10/utt2spk scp:/data2/tawara/work/ttic/MyPython/src/kaldi/timit/data/fbank/train_cv10/cmvn.scp')
-        dataset  = load_timit_labelled_kaldi( \
+        x_valid, y_valid  = load_timit_labelled_kaldi( \
             feats('/data2/tawara/work/ttic/MyPython/src/kaldi/timit/data/fbank/train_cv10/feats.scp'),
                 ali_to_pdf('\"gunzip -c /data2/tawara/work/ttic/MyPython/src/kaldi/timit/exp/tri3_ali/ali.*.gz |\"'), \
-                offsets = offset)
-        x_valid, y_valid = dataset
+                nnet_transf = '/data2/tawara/work/ttic/MyPython/src/kaldi/timit/final.feature_transform')
+
+
         model = NN_parallel(option_dict, njobs=1)
-#        model.load_parameters('/data2/tawara/work/ttic/MyPython/src/kaldi/timit/nnet.0')
-        model.load_parameters('/data2/tawara/work/ttic/MyPython/src/kaldi/timit/exp/fbank/dnn4_nn5_1024_cmvn_splice10_pretrain-dbn_dnn/nnet_dbn_dnn.init')
+        nnet_file='/data2/tawara/work/ttic/MyPython/src/kaldi/timit/exp/fbank/dnn4_nn5_1024_cmvn_splice10_pretrain-dbn_dnn/nnet_dbn_dnn.init'
+        if nnet_file is not None:
+            model.load_parameters_from_nnet(nnet_file)
         model.initialize()
 
         N_train_all = x_train.shape[0]
-        indexes_l = range(N_train_all)
+        indexes_l   = range(N_train_all)
         indexes_ul  = list(set(range(0,N_train_all))-set(indexes_l))
         N_train_l   = len(indexes_l)
         N_train_ul  = len(indexes_ul)

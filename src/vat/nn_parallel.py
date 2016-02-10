@@ -4,143 +4,66 @@ Created on Thu Dec 10 18:57:42 2015
 
 @author: tawara
 """
-from cuda_tools.cuda_utils import SelectGpuIdAuto
-from kaldi.data import load_nnet, convert_nnet_to_conf
-
-import chainer.serializers
-from chainer import Variable, cuda, optimizers
-from chainer import Chain, ChainList
-from chainer.serializers import HDF5Serializer,HDF5Deserializer
+from chainer import FunctionSet, Variable, cuda, optimizers
+from chainer import Link, Chain, ChainList
 import chainer.functions as F
 import chainer.links as L
 
+import cupy
 import copy
 import numpy as np
-import h5py
 
-from my_softmax_cross_entropy import softmax_cross_entropy
 import my_batch_normalization
 reload(my_batch_normalization)
 from my_batch_normalization import BatchNormalization
 from max_unpooling_2d import max_unpooling_2d
 
-
-
 # # Define NN
 class NN_parallel():
-    '''
-    This class contains Neuralnetwork, corresponding structure, and optimizer to optimize it.
-    The purpose of this container is provide easy interface including IO and parallelization frameworks
-    to chainer-based NN.
-
-    This class supports Kaldi nnet1 format and HDF5 to save model structure and its paramter.
-
-    *** The current version doesn't implement any parallelization yet. So njobs must be -1(cpu) or 1 ***
-    '''
-    def __init__(self, specs, njobs=-1):
-        '''
-        specs is dict which contains model structure.
-        njobs is a number of GPUs to be used. 
-        In this function, free GPU(s) with the largest available memory are automatically selected.
-        If njobs = -1, no GPU is selected and run CPU mode.
-        '''
+    def __init__(self, specs, njobs):
         self.specs = specs
-        if specs.has_key("layers_specs"):
-            layers_specs = self.specs["layers_specs"]
-            self.layers = CNN(layers_specs)
-        if specs.has_key("optimizer"):
-            self.set_optimizer(self.specs["optimizer"])
-
+        assert specs.has_key("layers_specs"), "Please specify specs of each layer"
+        layers_specs = self.specs["layers_specs"]
+        self.layers = CNN(layers_specs)
+        #rev_layers_specs = copy.deepcopy([spec for spec in reversed(specs["layers_specs"])])
+        #for spec in rev_layers_specs:
+        #    if spec["type"] == "full":
+        #        spec["dimensions"] = (spec["dimensions"][1], spec["dimensions"][0])
+        #    elif spec["type"] == "conv":
+        #        spec["type"] = "deconv"
+        #        spec["filter_shape"] = (spec["filter_shape"][1], spec["filter_shape"][0], spec["filter_shape"][2], spec["filter_shape"][3])
+        #self.dec_layers= CNN(rev_layers_specs)        
         if njobs==-1:
-            self.device_id = [-1] # cpu mode
+            self.device_id = [-1]
         else:
-            self.device_id = SelectGpuIdAuto()[0:njobs]
-            cuda.get_device(self.device_id[0]).use()
-    
-    def set_optimizer(self, opt):
-#        if ["type"] == "adam":
-#            self.optimizer = optimizers.Adam()
-#        elif self.specs["learning_rule"]["type"] == "adadelta":
-#            self.optimizer = optimizers.AdaDelta()
-#        elif self.specs["learning_rule"]["type"] == "momentum":
-#            self.optimizer = optimizers.MomentumSGD()
-#        elif self.specs["learning_rule"]["type"] == "SGD":
-#            self.optimizer = optimizers.SGD()
-#        else:
-#            raise ValueError("Unsupported rule" + str(self.specs["learning_rule"]["type"]))
-        self.optimizer = opt
-        self.specs['optimizer'] = opt
+            self.device_id = [4]
+            self.layers.to_gpu(self.device_id[0])
 
-    def initialize(self):
-        self.layers.to_gpu(self.device_id[0])
+        if self.specs["learning_rule"]["type"] == "adam":
+            self.optimizer = optimizers.Adam()
+        elif self.specs["learning_rule"]["type"] == "adadelta":
+            self.optimizer = optimizers.AdaDelta()
+        elif self.specs["learning_rule"]["type"] == "momentum":
+            self.optimizer = optimizers.MomentumSGD()
+        else:
+            raise ValueError("Unsupported rule" + str(self.specs["learning_rule"]["type"]))
         self.optimizer.setup(self.layers)
 
     def update(self):
         self.optimizer.update()
+
     def zero_grads(self):
         self.layers.zerograds()
 
     def forward(self, x, test=False, finetune=False):
         if self.device_id[0] >=0:
-            x  = cuda.to_gpu(x, device=self.device_id[0])
+            x = cuda.to_gpu(x, device=self.device_id[0])
         return self.layers(Variable(x), test, finetune)
 
     def loss_softmax(self, x, y, test=False, finetune=False):
         if self.device_id[0] >=0:
             y = cuda.to_gpu(y, device=self.device_id[0])
-        return softmax_cross_entropy(self.forward(x, test,finetune), Variable(y))
-
-    ''' ====== IO functions =========='''
-    def __write_hdf5__(self, specs, h, dirname):
-        if type(specs) == dict:
-            for key in specs:
-                if type(specs[key]) is dict:
-                    h.create_group(key)
-                    self.__write_hdf5__(specs[key], h, dirname+'/'+key)
-                elif type(specs[key]) == list:
-                    self.__write_hdf5__(specs[key], h, dirname+'/'+key)
-                else:
-                    if key is not 'W' and key is not 'b':
-                        h.create_dataset(dirname+'/'+key, data=specs[key])
-        elif type(specs) == list:
-            cnt=0
-            for l in specs:
-                subdirname = '/layer' + str(cnt)
-                h.create_group(dirname + subdirname)
-                self.__write_hdf5__(l, h, dirname + subdirname)
-                cnt+=1
-        else:
-            h.create_dataset(dirname, data=specs)
-
-    def save(self, filename):
-        with h5py.File(filename, 'w') as h:
-            self.__write_hdf5__(self.specs['layers_specs'], h, 'layers_specs')
-            s=HDF5Serializer(h)
-            s.save(self.layers)
-
-    def load(self, filename):
-        with h5py.File(filename, 'r') as h:
-            layers_specs=[]
-            for layer_id in h['layers_specs']:
-                specs = {key: h['layers_specs'][layer_id][key].value for key in h['layers_specs'][layer_id]}
-                layers_specs.append(specs)
-            self.layers = CNN(layers_specs)
-            s=HDF5Deserializer(h)
-            s.load(self.layers)
-
-    def load_parameters_from_nnet(self, filename):
-        '''
-        Load parameters from Kaldi nnet format
-        '''
-        layers_specs=[layer for layer in convert_nnet_to_conf(filename)]
-        layers_specs[-1]['activation'] = 'linear'
-        self.layers = CNN(layers_specs)
-        self.specs['layers_specs'] = layers_specs
-        cnt = 0
-        for layer in self.specs['layers_specs']:
-            print 'Layer'+str(cnt)
-            print layer['activation'], layer['dimensions']
-            cnt+=1
+        return F.softmax_cross_entropy(self.forward(x, test,finetune), Variable(y))
 
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
@@ -177,7 +100,6 @@ class CNN(ChainList):
         for i in xrange(0, self.n_layers):
             self[i].copyparams(cnn[i])
 
-
 class Layer():
     def __apply_activation__(self, h):
         if self.specs.has_key("activation"):
@@ -185,7 +107,7 @@ class Layer():
                 h = F.relu(h)
             elif self.specs["activation"] == "linear":
                 h = h
-            elif self.specs["activation"] == "Sigmoid":
+            elif self.specs["activation"] == "sigmoid":
                 h = F.sigmoid(h)
             else:
                 raise ValueError("Unsupported activation function: " + self.specs["activation"])
@@ -259,23 +181,21 @@ class ConvLayer(Chain, Layer):
         return h
 #        return F.max_pooling_2d(F.relu(self.conv(x)), self.specs["pool_shape"])
 
+
 class HiddenLayer(Chain, Layer):
     def __init__(self, specs):
         self.specs = specs
         assert self.specs.has_key("dimensions"), "Please specify dimensions (input, output)"
         in_dim, out_dim = self.specs["dimensions"]
-        initialW     = self.specs['W'] if self.specs.has_key('W') else None
-        initial_bias = self.specs['b'][:,0] if self.specs.has_key('b') else None
         if self.specs.has_key("BN") and self.specs["BN"]:
             super(HiddenLayer, self).__init__(
-                ln = L.Linear(in_dim, out_dim, initialW=initialW, initial_bias=initial_bias),
+                ln = L.Linear(in_dim, out_dim),
                 bn = BatchNormalization(out_dim)
             )
         else:
             super(HiddenLayer, self).__init__(
-                ln = L.Linear(in_dim, out_dim, initialW=initialW, initial_bias=initial_bias),
+                ln = L.Linear(in_dim, out_dim)
             )
-
     def __call__(self,x, test, finetune):
         h = self.ln(x)
         if self.specs.has_key("BN") and self.specs["BN"]:
@@ -287,12 +207,10 @@ class HiddenLayer(Chain, Layer):
             h = F.dropout(h, self.specs["dropout"], train = not test)
         return h
 
-if __name__ == "__main__":
-    option_dict={}
-    model = NN_parallel(option_dict, njobs=1)
-#    model.set_optimizer(optimizers.SGD(0.008))
-    model.load_parameters_from_nnet('/data2/tawara/work/ttic/MyPython/src/kaldi/timit/tmp/model1')
-#    model.initialize()
 
-    model.save('tmp.h5')
-    model.load('tmp.h5')
+
+def main():
+    npz = np.load("/home-nfs/tawara/work/ttic/data/icassp15.0/swbd.test.npz")
+    utt_ids = sorted(npz.keys())
+    mats = np.array([npz[i] for i in utt_ids])
+    mats = np.array([[t] for t in mats]).astype(np.float32)

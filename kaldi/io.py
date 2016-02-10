@@ -17,6 +17,32 @@ def smart_open(filename, mode=None):
             mode = "r"
         return open(filename, mode)
 
+def __write_token__(p, token, argv=None):
+    p.write(struct.pack('<%ds'%(len(token)+1), token+' '))
+    if argv is not None:
+        for value in argv:
+            print type(value)
+            if type(value) is int:
+                p.write(struct.pack("<bi", 4, value))
+            elif type(value) is float:
+                p.write(struct.pack("<bf", 4, value))
+
+def __write_matrix__(p, matrix):
+    if len(matrix.shape) ==1:
+        rows = matrix.shape[0]
+        cols = 1
+        p.write(struct.pack('<ccc', 'F','V',' '))
+        p.write(struct.pack('<bi', 4, rows))
+    else:
+        rows,cols = matrix.shape
+        p.write(struct.pack('<ccc', 'F','M',' '))
+        p.write(struct.pack('<bibi', 4, rows, 4, cols))
+    p.write(struct.pack('<' + 'f'*rows*cols, *matrix.flatten()))
+
+
+def __write_binary_header__(p):
+    p.write(struct.pack('<xc', 'B'))
+
 def __read_data__(p):
     is_binary, c = __check_binary__(p)
     if is_binary:
@@ -54,7 +80,7 @@ def __read_binary_matrix__(p):
      ?BFM4i4i...
       - '?' is space.
       - 'B' means this line is written in binary format
-      - 'FM' means this line is Flout matrix. Another choise is DV meaning Double vector.
+      - 'FM' means this line is Float matrix. Another choise is DV meaning Double vector.
          If the first character is 'C', this line is compressed and this function doesn't support it.
       - '4i4i' first part 4i means  number of colmuns(int) and its bitsize(4)?, and latter one means number of rows(int).
     Surported formats: *.ark, output from nnet-forward, and etc.
@@ -285,23 +311,62 @@ class KaldiNnetComponent:
         self.p.seek(-1,1)
         return token, argv
 
+
+
 # Following functions are for Kaldi's nnet files
 class KaldiNnet(KaldiFormat):
     def __init__(self, filename, mode =None):
         super(KaldiNnet, self).__init__(filename, mode)
-        self.binary = __check_binary__(self.p)[0]
+        if mode is not 'wb':
+            self.binary = __check_binary__(self.p)[0]
     
     def next(self):
         return KaldiNnetComponent(self.p).get()
 
+    def write(self, tokens):
+        '''
+        Flush binary in Kaldi's nnet1 format (e.x. <Nnet> and its argv, and matrix) .
+        Tokens is a list of pairs of token and corresponding values:
+          -  tokens[0][0]: token (e.x. ffineTransform)
+          -  tokens[0][1]: tupple of values (optional) (e.x. (400,400))
+          -  If you want to write matrix, set tokens[*][0] = '**MATRIX**' and tokens[*][1] = instance of np.ndarray
+        '''
+        __write_binary_header__(self.p)
+        for token in tokens:
+            values = token[1] if len(token)>1 else None 
+
+            if token[0] == '**MATRIX**':
+                __write_matrix__(self.p, values)
+            else:
+                __write_token__(self.p, '<' + token[0] +'>', values)
 
 # Debug and test
 if __name__ == '__main__':
     print '=================================================='
+    print '====      Testing KaldiNnet in write mode    ====='
+    print '=================================================='
+    cnt=0
+    filename ='/tmp/tmp.nnet'
+    print '\nWriting dummy nnet structure in' +filename
+    mat = np.asarray(range(4),dtype=np.float32).reshape(2,2)
+    vec = np.asarray(range(2),dtype=np.float32)
+    tokens = [ ['Nnet'], \
+                   ['AffineTransform', (2,2)], \
+                   ['LearnRateCoef', (1.0,)], \
+                   ['BiasLearnRateCoef', (1.0,)], \
+                   ['MaxNorm', (0,)], \
+                   ['**MATRIX**', mat], \
+                   ['**MATRIX**', vec], \
+                   ['Softmax',(2,2)], ['/Nnet'] ]
+    nnet = KaldiNnet(filename,'wb')
+    nnet.write(tokens)
+    del nnet
+    print '=================================================='
     print '====            Testing KaldiNnet            ====='
     print '=================================================='
     cnt=0
-    filename ='timit/exp/fbank/dnn4_nn5_1024_cmvn_splice0_pretrain-dbn/1.dbn'
+#    filename ='timit/exp/fbank/dnn4_nn5_1024_cmvn_splice0_pretrain-dbn/1.dbn'
+    filename ='/tmp/tmp.nnet'
     print '\nReading from ' +filename
     for layer in KaldiNnet(filename):
         print 'Layer' + str(cnt)
@@ -356,16 +421,16 @@ if __name__ == '__main__':
     print d1.keys()[0]
     print d1[d1.keys()[0]]
 
-    print '\n=================================================='
-    print '====  Testing KaldiArk(alignment, text mode) ====='
-    print '=================================================='
-    filename= 'text.ali'
-    print 'Reading from ' +filename
-    ark = KaldiArk(filename)
-    d1={key:mat for key,mat in ark }
-    print str(len(d1)) + ' files are read.'
-    print d1.keys()[0]
-    print d1[d1.keys()[0]]
+#    print '\n=================================================='
+#    print '====  Testing KaldiArk(alignment, text mode) ====='
+#    print '=================================================='
+#    filename= 'text.ali'
+#    print 'Reading from ' +filename
+#    ark = KaldiArk(filename)
+#    d1={key:mat for key,mat in ark }
+#    print str(len(d1)) + ' files are read.'
+#    print d1.keys()[0]
+#    print d1[d1.keys()[0]]
 
     print '\n=================================================='
     print '====       Testing KaldiArk(text mode)       ====='

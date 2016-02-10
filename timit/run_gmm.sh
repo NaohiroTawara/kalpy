@@ -42,9 +42,9 @@ if [ ! -d steps ] ; then
     ln -s $kaldi/egs/timit/s5/steps ./
 fi
 
-for x in train dev test; do 
-    sed "s:\$KALDI:$kaldi:" data/$x/wav.org.scp | sed "s:\$TIMIT:$timit:" > data/$x/wav.scp
-done
+#for x in train dev test; do 
+#    sed "s:\$KALDI:$kaldi:" data/$x/wav.org.scp | sed "s:\$TIMIT:$timit:" > data/$x/wav.scp
+#done
 
 
 echo ============================================================================
