@@ -1,0 +1,20 @@
+#from  scipy.spatial import KDTree
+from sklearn.neighbors import KDTree
+import sys
+sys.path.append('../chainer/examples/mnist/')
+import data
+import numpy as np
+
+mnist = data.load_mnist_data()
+
+mnist['data']=mnist['data'].astype(np.float32)
+mnist['data'] /= 255
+mnist['target']=mnist['target'].astype(np.int32)
+
+N=60000
+x_train, x_test = np.split(mnist['data'], [N])
+y_train, y_test = np.split(mnist['target'], [N])
+
+
+kdt = KDTree(x_train, leaf_size=30,metric='euclidean')
+res = kdt.query(x_test, k=10)
