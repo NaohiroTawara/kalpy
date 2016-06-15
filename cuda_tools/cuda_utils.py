@@ -18,9 +18,11 @@ def SelectGpuIdAuto():
             'M, used:'  + str(memInfo.used/1000000)  + \
             'M, total:' + str(memInfo.total/1000000) + \
             'M, free/total: %0.6f' % ratio
-
-        if not len(nvmlDeviceGetComputeRunningProcesses(handle))>0:
-            freeDevices[i] = ratio
+        try:
+            if not len(nvmlDeviceGetComputeRunningProcesses(handle))>0:
+                freeDevices[i] = ratio
+        except:
+            print 'Not supported device: %s' % nvmlDeviceGetName(handle)
     sorted_devices = [k for k,v in sorted(freeDevices.items(), key=lambda x:x[1], reverse=True)]
     print 'Trying to select device: '   + str(sorted_devices[0]) + \
         ' (automatically), mem_ratio: %0.6f' % freeDevices[sorted_devices[0]]
